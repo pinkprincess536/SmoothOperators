@@ -1,9 +1,25 @@
 import { analyzeScreening } from "./diagnosis.js";
-import { loadLmsJson, saveLmsJson, clearLmsJson } from "./storage.js";
+import {
+  loadLmsRecord,
+  saveLmsJson,
+  clearLmsJson,
+  saveScreeningRecord,
+  listScreeningRecords,
+  replaceScreeningRecords,
+  clearScreeningRecords,
+} from "./storage.js";
 
 const $ = (id) => document.getElementById(id);
 
 let lmsCache = null;
+
+function setRecordsStatus(text, ok) {
+  const el = $("records-status");
+  if (!el) return;
+  el.textContent = text;
+  el.classList.toggle("status-ok", !!ok);
+  el.classList.toggle("status-bad", ok === false);
+}
 
 function levelClass(level) {
   if (level === "severe") return "pill pill-severe";
@@ -32,6 +48,23 @@ function setLmsStatus(text, ok) {
   el.classList.toggle("status-bad", ok === false);
 }
 
+function fmtIso(ts) {
+  if (!ts) return null;
+  const d = new Date(ts);
+  if (Number.isNaN(d.valueOf())) return null;
+  return d.toLocaleString();
+}
+
+function describeLms(data, source, savedAtUtc) {
+  const version = data?.meta?.schema_version || "unknown-version";
+  const generatedAt = fmtIso(data?.meta?.generated_at_utc);
+  const savedAt = fmtIso(savedAtUtc);
+  const parts = [`LMS loaded (${source})`, `schema: ${version}`];
+  if (generatedAt) parts.push(`generated: ${generatedAt}`);
+  if (savedAt) parts.push(`stored: ${savedAt}`);
+  return `${parts.join(" | ")}.`;
+}
+
 async function fetchBundledLms() {
   const res = await fetch("data/lms.json", { cache: "no-cache" });
   if (!res.ok) return null;
@@ -51,25 +84,26 @@ function hasLmsData(data) {
 
 async function initLms() {
   try {
-    const fromIdb = await loadLmsJson();
-    if (hasLmsData(fromIdb)) {
-      lmsCache = fromIdb;
-      setLmsStatus("LMS loaded from device storage (IndexedDB).", true);
+    const bundled = await fetchBundledLms();
+    if (hasLmsData(bundled)) {
+      lmsCache = bundled;
+      setLmsStatus(describeLms(bundled, "bundled data/lms.json", null), true);
+      await saveLmsJson(bundled);
+      return;
+    }
+  } catch {
+    /* offline or missing bundle */
+  }
+
+  try {
+    const fromIdb = await loadLmsRecord();
+    if (fromIdb && hasLmsData(fromIdb.data)) {
+      lmsCache = fromIdb.data;
+      setLmsStatus(describeLms(fromIdb.data, "device storage (IndexedDB)", fromIdb.savedAtUtc), true);
       return;
     }
   } catch {
     /* no idb */
-  }
-
-  try {
-    const bundled = await fetchBundledLms();
-    if (hasLmsData(bundled)) {
-      lmsCache = bundled;
-      setLmsStatus("LMS loaded from bundled data/lms.json.", true);
-      return;
-    }
-  } catch {
-    /* offline or missing */
   }
 
   lmsCache = null;
@@ -143,6 +177,50 @@ function readForm() {
 function run() {
   const result = analyzeScreening(readForm());
   render(result);
+  const hasCoreScores = Object.values(result.zScores || {}).some((v) => v != null);
+  if (!hasCoreScores) return;
+  saveScreeningRecord({ input: result.input, result })
+    .then(() => refreshRecordsStatus())
+    .catch(() => setRecordsStatus("Could not save this screening record locally.", false));
+}
+
+async function refreshRecordsStatus() {
+  const rows = await listScreeningRecords();
+  const count = rows.length;
+  const last = rows[count - 1];
+  const lastAt = fmtIso(last?.createdAtUtc);
+  const tail = lastAt ? ` Last saved: ${lastAt}.` : "";
+  setRecordsStatus(`${count} local record(s) stored.${tail}`, true);
+}
+
+async function exportRecordsJson() {
+  const rows = await listScreeningRecords();
+  const payload = {
+    schema: "screening-records-v1",
+    exportedAtUtc: new Date().toISOString(),
+    records: rows,
+  };
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `malnutrition-records-${new Date().toISOString().slice(0, 10)}.json`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+  setRecordsStatus(`Exported ${rows.length} record(s) to JSON.`, true);
+}
+
+async function importRecordsJson(file) {
+  if (!file) return;
+  const text = await file.text();
+  const payload = JSON.parse(text);
+  if (!payload || !Array.isArray(payload.records)) {
+    throw new Error("Invalid records JSON format. Expected { records: [] }.");
+  }
+  await replaceScreeningRecords(payload.records);
+  await refreshRecordsStatus();
 }
 
 async function onUploadLms(file) {
@@ -152,13 +230,34 @@ async function onUploadLms(file) {
   if (!hasLmsData(data)) throw new Error("JSON must contain waz, haz, whz, baz with M and F arrays.");
   await saveLmsJson(data);
   lmsCache = data;
-  setLmsStatus("LMS saved on device for offline use.", true);
+  setLmsStatus(describeLms(data, "uploaded JSON", new Date().toISOString()), true);
   run();
 }
 
 function registerSw() {
   if (!("serviceWorker" in navigator)) return;
-  navigator.serviceWorker.register("sw.js").catch(() => {});
+  navigator.serviceWorker
+    .register("sw.js")
+    .then((reg) => {
+      const askRefresh = () => {
+        const ok = window.confirm("A new app version is available. Refresh now?");
+        if (!ok) return;
+        if (reg.waiting) reg.waiting.postMessage({ type: "SKIP_WAITING" });
+      };
+      if (reg.waiting) askRefresh();
+      reg.addEventListener("updatefound", () => {
+        const installing = reg.installing;
+        if (!installing) return;
+        installing.addEventListener("statechange", () => {
+          if (installing.state === "installed" && navigator.serviceWorker.controller) askRefresh();
+        });
+      });
+      navigator.serviceWorker.addEventListener("controllerchange", () => {
+        window.location.reload();
+      });
+      window.setTimeout(() => reg.update().catch(() => {}), 3000);
+    })
+    .catch(() => {});
 }
 
 $("form-screening").addEventListener("submit", (e) => {
@@ -180,10 +279,48 @@ $("lms-file").addEventListener("change", (e) => {
 });
 
 $("btn-clear-lms").addEventListener("click", async () => {
-  await clearLmsJson();
-  await initLms();
-  run();
+  setLmsStatus("Clearing device-stored LMS data...", true);
+  try {
+    const beforeClear = await loadLmsRecord().catch(() => null);
+    await clearLmsJson();
+    const afterClear = await loadLmsRecord().catch(() => null);
+    const cleared = afterClear == null;
+    const verifiedAt = new Date().toLocaleTimeString();
+    const verification = `Verification @ ${verifiedAt} | before-clear: ${
+      beforeClear ? "present" : "missing"
+    } | after-clear: ${cleared ? "empty" : "still present"}.`;
+    lmsCache = null;
+    setLmsStatus(
+      `LMS cleared from device/runtime. Screening is paused until refresh (to reload bundled data/lms.json) or LMS upload. ${verification}`,
+      false
+    );
+    run();
+  } catch (err) {
+    setLmsStatus(`Could not clear LMS data: ${err?.message || String(err)}`, false);
+  }
+});
+
+$("btn-export-records").addEventListener("click", () => {
+  exportRecordsJson().catch((err) => setRecordsStatus(err.message || String(err), false));
+});
+
+$("btn-import-records").addEventListener("click", () => {
+  $("records-file").click();
+});
+
+$("records-file").addEventListener("change", (e) => {
+  const f = e.target.files && e.target.files[0];
+  importRecordsJson(f).catch((err) => setRecordsStatus(err.message || String(err), false));
+  e.target.value = "";
+});
+
+$("btn-clear-records").addEventListener("click", async () => {
+  await clearScreeningRecords();
+  await refreshRecordsStatus();
 });
 
 registerSw();
-initLms().then(() => run());
+initLms()
+  .then(() => run())
+  .then(() => refreshRecordsStatus())
+  .catch(() => setRecordsStatus("Could not read local screening records.", false));

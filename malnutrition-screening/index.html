@@ -107,6 +107,18 @@
         </div>
       </section>
 
+      <section class="card" aria-labelledby="records-heading">
+        <h2 id="records-heading">Offline records</h2>
+        <p class="hint">Each screening is stored locally on this device. Export/import JSON for manual sync.</p>
+        <div class="row-actions">
+          <button type="button" class="btn-ghost" id="btn-export-records">Export records JSON</button>
+          <button type="button" class="btn-ghost" id="btn-import-records">Import records JSON</button>
+          <button type="button" class="btn-ghost" id="btn-clear-records">Clear records</button>
+        </div>
+        <input id="records-file" type="file" accept="application/json,.json" class="sr-only" />
+        <div id="records-status" role="status">—</div>
+      </section>
+
       <section class="card">
         <details class="research">
           <summary>Research &amp; validation notes</summary>
