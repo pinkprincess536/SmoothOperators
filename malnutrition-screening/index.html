@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#1a222c" />
+    <meta name="description" content="Offline WHO LMS malnutrition screening (WAZ, HAZ, WHZ, BAZ) with MUAC." />
+    <title>Malnutrition Screening</title>
+    <link rel="manifest" href="manifest.json" />
+    <link rel="stylesheet" href="css/app.css" />
+    <link rel="icon" href="icons/icon.svg" type="image/svg+xml" />
+  </head>
+  <body>
+    <div class="wrap">
+      <header>
+        <h1>Malnutrition screening</h1>
+        <p>WHO LMS z-scores, MUAC, and combined acute classification — works offline after first load.</p>
+      </header>
+
+      <form id="form-screening" class="card" autocomplete="on">
+        <h2>Measurements</h2>
+        <div class="grid2">
+          <div>
+            <label for="age">Age (completed months)</label>
+            <input id="age" name="age" type="number" inputmode="numeric" min="0" max="240" step="1" placeholder="e.g. 18" required />
+          </div>
+          <div>
+            <label for="sex">Sex</label>
+            <select id="sex" name="sex" required>
+              <option value="M">Male</option>
+              <option value="F">Female</option>
+            </select>
+          </div>
+        </div>
+        <label for="weight">Weight (kg)</label>
+        <input id="weight" name="weight" type="number" inputmode="decimal" min="0.1" step="0.01" placeholder="e.g. 8.2" required />
+        <label for="height">Height / length (cm)</label>
+        <input id="height" name="height" type="number" inputmode="decimal" min="30" step="0.1" placeholder="e.g. 76.0" required />
+        <p class="hint">WHZ uses length +0.7 cm correction for children under 24 months (same convention as standard field tables).</p>
+
+        <label for="muac">MUAC (mm, optional)</label>
+        <div class="muac-guide">
+          <strong>How to measure</strong>
+          <ul>
+            <li>Midpoint between the tip of the shoulder and the tip of the elbow</li>
+            <li>Arm hanging relaxed at the side</li>
+            <li>Use a non-stretch tape; read to the nearest mm</li>
+            <li>MUAC cut-offs used here apply to ages 6–59 months only</li>
+          </ul>
+        </div>
+        <input id="muac" name="muac" type="number" inputmode="numeric" min="50" max="250" step="1" placeholder="e.g. 124" />
+
+        <div class="row-actions">
+          <button type="submit" class="btn-primary" id="btn-run">Screen</button>
+        </div>
+      </form>
+
+      <section class="card" aria-labelledby="lms-heading">
+        <h2 id="lms-heading">LMS reference data</h2>
+        <p class="hint">Bundle <code>data/lms.json</code> for offline install, or upload a JSON file once; it is stored on this device.</p>
+        <label for="lms-file" class="sr-only">Upload LMS JSON</label>
+        <input id="lms-file" type="file" accept="application/json,.json" />
+        <div class="row-actions">
+          <button type="button" class="btn-ghost" id="btn-clear-lms">Clear stored LMS</button>
+        </div>
+        <div id="lms-status" role="status"></div>
+      </section>
+
+      <section class="card" aria-labelledby="out-heading">
+        <h2 id="out-heading">Results</h2>
+        <div class="z-grid">
+          <div class="z-box">
+            <div class="k">WAZ</div>
+            <div class="v" id="out-waz">—</div>
+            <span class="pill pill-na" id="pill-waz">—</span>
+          </div>
+          <div class="z-box">
+            <div class="k">HAZ</div>
+            <div class="v" id="out-haz">—</div>
+            <span class="pill pill-na" id="pill-haz">—</span>
+          </div>
+          <div class="z-box">
+            <div class="k">WHZ</div>
+            <div class="v" id="out-whz">—</div>
+            <span class="pill pill-na" id="pill-whz">—</span>
+          </div>
+          <div class="z-box">
+            <div class="k">BAZ</div>
+            <div class="v" id="out-baz">—</div>
+            <span class="pill pill-na" id="pill-baz">—</span>
+          </div>
+        </div>
+        <p class="hint" id="out-whz-mode">—</p>
+        <div>
+          <strong>MUAC classification</strong>
+          <p id="muac-summary" class="hint" style="margin-top: 0.25rem">—</p>
+          <p id="muac-detail" class="hint">—</p>
+        </div>
+        <div id="acute-combined" class="acute-banner acute-na" role="status">—</div>
+        <h2 style="margin-top: 1rem; font-size: 0.95rem">Final diagnosis (priority order)</h2>
+        <ol id="final-diagnosis"></ol>
+        <div id="confidence" class="confidence confidence-low" role="status">—</div>
+        <div class="legend" aria-hidden="true">
+          <span><span class="dot dot-severe"></span>Severe</span>
+          <span><span class="dot dot-moderate"></span>Moderate</span>
+          <span><span class="dot dot-normal"></span>Normal</span>
+        </div>
+      </section>
+
+      <section class="card">
+        <details class="research">
+          <summary>Research &amp; validation notes</summary>
+          <p style="font-size: 0.88rem; color: var(--muted); margin-top: 0.65rem">
+            National surveys such as NFHS and DHS publish prevalence estimates using the same underlying WHO growth
+            standards, but agreement with this app requires identical LMS tables, age definitions, and measurement
+            protocols. MUAC-for-age reference curves exist in some research settings; this build uses fixed MUAC
+            thresholds (115 / 125 mm) for 6–59 months and real-time measurement input, as is common in acute screening.
+          </p>
+          <div id="validation-dynamic" style="font-size: 0.88rem; color: var(--muted); margin-top: 0.5rem"></div>
+        </details>
+      </section>
+
+      <footer>Clinical decisions require trained assessment. This tool supports screening, not diagnosis.</footer>
+    </div>
+
+    <script type="module" src="js/app.js"></script>
+  </body>
+</html>
