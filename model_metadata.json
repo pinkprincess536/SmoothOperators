@@ -1,0 +1,21 @@
+{
+  "model": "ResNet18",
+  "input_shape": [
+    224,
+    224,
+    3
+  ],
+  "class_indices": {
+    "healthy": 0,
+    "malnourished": 1
+  },
+  "classes": [
+    "healthy",
+    "malnourished"
+  ],
+  "optimal_threshold": 0.2,
+  "preprocessing": "grayscale + CLAHE + preprocess_input",
+  "val_accuracy": 0.0,
+  "val_auc": 0.0,
+  "test_auc": 0.9761904761904762
+}

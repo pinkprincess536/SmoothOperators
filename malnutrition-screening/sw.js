@@ -3,6 +3,7 @@ const PRECACHE_ASSETS = [
   "./index.html",
   "./css/app.css",
   "./js/app.js",
+  "./js/ai.js",
   "./js/lms.js",
   "./js/muac.js",
   "./js/diagnosis.js",

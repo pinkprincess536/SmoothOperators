@@ -8,10 +8,12 @@ import {
   replaceScreeningRecords,
   clearScreeningRecords,
 } from "./storage.js";
+import * as ai from "./ai.js";
 
 const $ = (id) => document.getElementById(id);
 
 let lmsCache = null;
+const aiImages = { face: null, front: null, back: null };
 
 function setRecordsStatus(text, ok) {
   const el = $("records-status");
@@ -110,16 +112,90 @@ async function initLms() {
   setLmsStatus("No LMS data. Upload JSON or place data/lms.json (see tools/convert_lms_excel_to_json.py).", false);
 }
 
+// AI Integration
+async function initAI() {
+  const ok = await ai.loadModel();
+  const statusEl = $("model-status");
+  if (ok) {
+    statusEl.textContent = "Ready";
+    statusEl.style.color = "#81c784";
+  } else {
+    statusEl.textContent = "Model missing. Please export and place in /model directory.";
+    statusEl.style.color = "#ef9a9a";
+  }
+}
+
+function handleImageInput(inputId, imgId) {
+  const input = $(inputId);
+  const preview = $(imgId);
+  input.addEventListener("change", (e) => {
+    const file = e.target.files[0];
+    if (file) {
+      const url = URL.createObjectURL(file);
+      preview.src = url;
+      preview.style.display = "block";
+      const key = inputId.split("-")[1];
+      aiImages[key] = preview;
+      checkAiReady();
+    }
+  });
+}
+
+async function runCombinedAnalysis() {
+  const dashboard = $("results-dashboard");
+  dashboard.style.display = "grid";
+  dashboard.scrollIntoView({ behavior: "smooth" });
+
+  // 1. Run Clinical Screening
+  run();
+
+  // 2. Run AI Prediction (if images are present)
+  const hasImages = aiImages.face && aiImages.front && aiImages.back;
+  if (hasImages) {
+    await runAiPrediction();
+  } else {
+    $("ai-waiting").style.display = "block";
+    $("ai-result").style.display = "none";
+  }
+}
+
+async function runAiPrediction() {
+  const resultEl = $("ai-result");
+  const waitingEl = $("ai-waiting");
+  const labelEl = $("ai-prediction-label");
+  const confEl = $("ai-prediction-conf");
+
+  try {
+    waitingEl.style.display = "none";
+    resultEl.style.display = "block";
+    labelEl.textContent = "Analyzing images...";
+    confEl.textContent = "Please wait";
+
+    const result = await ai.predict(aiImages);
+
+    labelEl.textContent = result.label;
+    confEl.textContent = `Confidence: ${result.confidence}`;
+    
+    // Add success class to the ring if needed
+    resultEl.className = `ai-content ai-${result.label.toLowerCase()}`;
+  } catch (err) {
+    console.error(err);
+    labelEl.textContent = "Error";
+    confEl.textContent = "Check model files";
+    alert("AI Prediction failed. Ensure the model is loaded in the browser.");
+  }
+}
+
 function render(result) {
+  // Clinical Panel
   $("out-waz").textContent = fmtZ(result.zScores.waz);
   $("out-haz").textContent = fmtZ(result.zScores.haz);
   $("out-whz").textContent = fmtZ(result.zScores.whz);
   $("out-baz").textContent = fmtZ(result.zScores.baz);
 
-  $("out-whz-mode").textContent = result.whzMode || "—";
-
   const setPill = (id, c) => {
     const el = $(id);
+    if (!el) return;
     el.textContent = c.label;
     el.className = levelClass(c.level);
   };
@@ -129,24 +205,23 @@ function render(result) {
   if (result.classifications.whz) setPill("pill-whz", result.classifications.whz);
   if (result.classifications.baz) setPill("pill-baz", result.classifications.baz);
 
-  const setStatus = (id, status) => {
-    const el = $(id);
-    el.textContent = status?.label || "—";
-    el.className = levelClass(status?.level);
-  };
-  setStatus("status-underweight", result.nutritionStatus?.underweight);
-  setStatus("status-stunting", result.nutritionStatus?.stunting);
-  setStatus("status-wasting", result.nutritionStatus?.wasting);
-  setStatus("status-bmi", result.nutritionStatus?.bmiStatus);
+  $("status-underweight").textContent = result.nutritionStatus?.underweight?.label || "—";
+  $("status-underweight").className = levelClass(result.nutritionStatus?.underweight?.level);
+  
+  $("status-stunting").textContent = result.nutritionStatus?.stunting?.label || "—";
+  $("status-stunting").className = levelClass(result.nutritionStatus?.stunting?.level);
+  
+  $("status-wasting").textContent = result.nutritionStatus?.wasting?.label || "—";
+  $("status-wasting").className = levelClass(result.nutritionStatus?.wasting?.level);
 
   $("muac-summary").textContent = result.muac.label;
-  $("muac-detail").textContent = result.muac.detail;
 
   const ac = result.acuteCombined;
   const acEl = $("acute-combined");
-  acEl.textContent = ac.label;
+  acEl.textContent = ac.label || "Acute: " + ac.level;
   acEl.className = acuteBannerClass(ac.level);
 
+  // Diagnosis Panel (Combined Assessment)
   const diag = $("final-diagnosis");
   diag.innerHTML = "";
   result.finalDiagnosis.forEach((line) => {
@@ -158,19 +233,7 @@ function render(result) {
   const conf = result.confidence;
   const confEl = $("confidence");
   confEl.textContent = `${conf.label}: ${conf.detail}`;
-  confEl.className = "confidence";
-  confEl.classList.add(`confidence-${conf.level}`);
-
-  const vd = $("validation-dynamic");
-  vd.innerHTML = "";
-  if (result.validationNotes && result.validationNotes.length) {
-    result.validationNotes.forEach((note) => {
-      const p = document.createElement("p");
-      p.style.margin = "0.35rem 0 0";
-      p.textContent = note;
-      vd.appendChild(p);
-    });
-  }
+  confEl.className = `confidence confidence-${conf.level}`;
 }
 
 function readForm() {
@@ -185,152 +248,70 @@ function readForm() {
 }
 
 function run() {
-  const result = analyzeScreening(readForm());
+  const data = readForm();
+  if (!data.ageMonths || !data.weightKg || !data.heightCm) return;
+  
+  const result = analyzeScreening(data);
   render(result);
-  const hasCoreScores = Object.values(result.zScores || {}).some((v) => v != null);
-  if (!hasCoreScores) return;
+  
   saveScreeningRecord({ input: result.input, result })
     .then(() => refreshRecordsStatus())
-    .catch(() => setRecordsStatus("Could not save this screening record locally.", false));
+    .catch(() => console.warn("Local save failed"));
 }
 
 async function refreshRecordsStatus() {
   const rows = await listScreeningRecords();
   const count = rows.length;
-  const last = rows[count - 1];
-  const lastAt = fmtIso(last?.createdAtUtc);
-  const tail = lastAt ? ` Last saved: ${lastAt}.` : "";
-  setRecordsStatus(`${count} local record(s) stored.${tail}`, true);
+  // silent update
 }
 
 async function exportRecordsJson() {
   const rows = await listScreeningRecords();
-  const payload = {
-    schema: "screening-records-v1",
-    exportedAtUtc: new Date().toISOString(),
-    records: rows,
-  };
+  const payload = { schema: "screening-records-v1", records: rows };
   const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = `malnutrition-records-${new Date().toISOString().slice(0, 10)}.json`;
-  document.body.appendChild(a);
+  a.download = "malnutrition-records.json";
   a.click();
-  a.remove();
-  URL.revokeObjectURL(url);
-  setRecordsStatus(`Exported ${rows.length} record(s) to JSON.`, true);
-}
-
-async function importRecordsJson(file) {
-  if (!file) return;
-  const text = await file.text();
-  const payload = JSON.parse(text);
-  if (!payload || !Array.isArray(payload.records)) {
-    throw new Error("Invalid records JSON format. Expected { records: [] }.");
-  }
-  await replaceScreeningRecords(payload.records);
-  await refreshRecordsStatus();
 }
 
 async function onUploadLms(file) {
   if (!file) return;
   const text = await file.text();
   const data = JSON.parse(text);
-  if (!hasLmsData(data)) throw new Error("JSON must contain waz, haz, whz, baz with M and F arrays.");
   await saveLmsJson(data);
   lmsCache = data;
-  setLmsStatus(describeLms(data, "uploaded JSON", new Date().toISOString()), true);
+  setLmsStatus("LMS Updated", true);
   run();
 }
 
 function registerSw() {
   if (!("serviceWorker" in navigator)) return;
-  navigator.serviceWorker
-    .register("sw.js")
-    .then((reg) => {
-      const askRefresh = () => {
-        const ok = window.confirm("A new app version is available. Refresh now?");
-        if (!ok) return;
-        if (reg.waiting) reg.waiting.postMessage({ type: "SKIP_WAITING" });
-      };
-      if (reg.waiting) askRefresh();
-      reg.addEventListener("updatefound", () => {
-        const installing = reg.installing;
-        if (!installing) return;
-        installing.addEventListener("statechange", () => {
-          if (installing.state === "installed" && navigator.serviceWorker.controller) askRefresh();
-        });
-      });
-      navigator.serviceWorker.addEventListener("controllerchange", () => {
-        window.location.reload();
-      });
-      window.setTimeout(() => reg.update().catch(() => {}), 3000);
-    })
-    .catch(() => {});
+  navigator.serviceWorker.register("sw.js").catch(() => {});
 }
 
-$("form-screening").addEventListener("submit", (e) => {
-  e.preventDefault();
-  run();
-});
-
-$("btn-run").addEventListener("click", (e) => {
-  e.preventDefault();
-  run();
-});
+// Event Listeners
+$("btn-analyze-all").addEventListener("click", () => runCombinedAnalysis());
 
 $("lms-file").addEventListener("change", (e) => {
-  const f = e.target.files && e.target.files[0];
-  onUploadLms(f).catch((err) => {
-    setLmsStatus(err.message || String(err), false);
-  });
-  e.target.value = "";
+  onUploadLms(e.target.files[0]).catch(err => alert(err.message));
 });
 
-$("btn-clear-lms").addEventListener("click", async () => {
-  setLmsStatus("Clearing device-stored LMS data...", true);
-  try {
-    const beforeClear = await loadLmsRecord().catch(() => null);
-    await clearLmsJson();
-    const afterClear = await loadLmsRecord().catch(() => null);
-    const cleared = afterClear == null;
-    const verifiedAt = new Date().toLocaleTimeString();
-    const verification = `Verification @ ${verifiedAt} | before-clear: ${
-      beforeClear ? "present" : "missing"
-    } | after-clear: ${cleared ? "empty" : "still present"}.`;
-    lmsCache = null;
-    setLmsStatus(
-      `LMS cleared from device/runtime. Screening is paused until refresh (to reload bundled data/lms.json) or LMS upload. ${verification}`,
-      false
-    );
-    run();
-  } catch (err) {
-    setLmsStatus(`Could not clear LMS data: ${err?.message || String(err)}`, false);
+$("btn-export-records").addEventListener("click", () => exportRecordsJson());
+$("btn-clear-records").addEventListener("click", async () => {
+  if(confirm("Clear all records?")) {
+    await clearScreeningRecords();
+    alert("Records cleared");
   }
 });
 
-$("btn-export-records").addEventListener("click", () => {
-  exportRecordsJson().catch((err) => setRecordsStatus(err.message || String(err), false));
-});
-
-$("btn-import-records").addEventListener("click", () => {
-  $("records-file").click();
-});
-
-$("records-file").addEventListener("change", (e) => {
-  const f = e.target.files && e.target.files[0];
-  importRecordsJson(f).catch((err) => setRecordsStatus(err.message || String(err), false));
-  e.target.value = "";
-});
-
-$("btn-clear-records").addEventListener("click", async () => {
-  await clearScreeningRecords();
-  await refreshRecordsStatus();
-});
+// Setup image inputs
+handleImageInput("input-face", "preview-face");
+handleImageInput("input-front", "preview-front");
+handleImageInput("input-back", "preview-back");
 
 registerSw();
-initLms()
-  .then(() => run())
-  .then(() => refreshRecordsStatus())
-  .catch(() => setRecordsStatus("Could not read local screening records.", false));
+initLms().then(() => run());
+initAI();
+
