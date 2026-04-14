@@ -129,6 +129,16 @@ function render(result) {
   if (result.classifications.whz) setPill("pill-whz", result.classifications.whz);
   if (result.classifications.baz) setPill("pill-baz", result.classifications.baz);
 
+  const setStatus = (id, status) => {
+    const el = $(id);
+    el.textContent = status?.label || "—";
+    el.className = levelClass(status?.level);
+  };
+  setStatus("status-underweight", result.nutritionStatus?.underweight);
+  setStatus("status-stunting", result.nutritionStatus?.stunting);
+  setStatus("status-wasting", result.nutritionStatus?.wasting);
+  setStatus("status-bmi", result.nutritionStatus?.bmiStatus);
+
   $("muac-summary").textContent = result.muac.label;
   $("muac-detail").textContent = result.muac.detail;
 

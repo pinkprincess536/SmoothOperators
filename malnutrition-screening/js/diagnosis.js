@@ -14,6 +14,36 @@ function classifyZ(z, highThreshold = 2) {
   return { label: "Normal range", level: "normal" };
 }
 
+function namedStatus(axis, classification) {
+  const c = classification || { label: "Not applicable", level: "na" };
+  if (axis === "underweight") {
+    if (c.level === "severe") return "Severe underweight";
+    if (c.level === "moderate") return "Moderate underweight";
+    if (c.level === "normal") return "No underweight";
+    return "Underweight not applicable";
+  }
+  if (axis === "stunting") {
+    if (c.level === "severe") return "Severe stunting";
+    if (c.level === "moderate") return "Moderate stunting";
+    if (c.level === "normal") return "No stunting";
+    return "Stunting not applicable";
+  }
+  if (axis === "wasting") {
+    if (c.level === "severe") return "Severe wasting";
+    if (c.level === "moderate") return "Moderate wasting";
+    if (c.level === "normal") return "No wasting";
+    return "Wasting not applicable";
+  }
+  if (axis === "bmi") {
+    if (c.level === "severe") return "Severe thinness";
+    if (c.level === "moderate") return "Moderate thinness";
+    if (c.level === "over") return "Overweight / overnutrition risk";
+    if (c.level === "normal") return "Normal BMI-for-age";
+    return "BMI-for-age not applicable";
+  }
+  return c.label;
+}
+
 /**
  * @param {object} params
  * @param {object} params.lms - loaded LMS JSON
@@ -44,6 +74,12 @@ export function analyzeScreening({
     zScores: { waz: null, haz: null, whz: null, baz: null },
     whzMode: null,
     classifications: {},
+    nutritionStatus: {
+      underweight: { label: "—", level: "na" },
+      stunting: { label: "—", level: "na" },
+      wasting: { label: "—", level: "na" },
+      bmiStatus: { label: "—", level: "na" },
+    },
     muac: classifyMUAC(muacMm, age),
     acuteCombined: { level: "na", label: "", sources: [] },
     finalDiagnosis: [],
@@ -60,17 +96,29 @@ export function analyzeScreening({
       whz: { label: "—", level: "na" },
       baz: { label: "—", level: "na" },
     };
+    result.nutritionStatus = {
+      underweight: { label: "Underweight not applicable", level: "na" },
+      stunting: { label: "Stunting not applicable", level: "na" },
+      wasting: { label: "Wasting not applicable", level: "na" },
+      bmiStatus: { label: "BMI-for-age not applicable", level: "na" },
+    };
     result.acuteCombined = { level: "na", label: "—", sources: [] };
     return result;
   }
   if (errors.length) {
-    result.finalDiagnosis = errors;
+    result.finalDiagnosis = ["Unable to calculate one or more growth indices for this input."];
     result.confidence = { level: "low", label: "Low", detail: "Load valid LMS JSON to compute z-scores." };
     result.classifications = {
       waz: { label: "—", level: "na" },
       haz: { label: "—", level: "na" },
       whz: { label: "—", level: "na" },
       baz: { label: "—", level: "na" },
+    };
+    result.nutritionStatus = {
+      underweight: { label: "Underweight not applicable", level: "na" },
+      stunting: { label: "Stunting not applicable", level: "na" },
+      wasting: { label: "Wasting not applicable", level: "na" },
+      bmiStatus: { label: "BMI-for-age not applicable", level: "na" },
     };
     result.acuteCombined = { level: "na", label: "—", sources: [] };
     return result;
@@ -93,8 +141,9 @@ export function analyzeScreening({
   let whzMode = "Not applicable (>5 yrs)";
   if (age <= 60) {
     const measurement = age < 24 ? h + 0.7 : h;
+    const ageBand = age < 24 ? "0-2" : "2-5";
     whzMode = age < 24 ? "Weight-for-length (0–23 mo, length +0.7 cm correction)" : "Weight-for-height (24–60 mo)";
-    const whzRow = interpolateLMS(lms, "whz", measurement, S, "height");
+    const whzRow = interpolateLMS(lms, "whz", measurement, S, "height", { ageBand });
     if (!whzRow) errors.push("WHZ: no LMS rows for this sex/height.");
     else whz = zScore(w, whzRow.L, whzRow.M, whzRow.S);
   }
@@ -104,13 +153,19 @@ export function analyzeScreening({
   const baz = bazRow ? zScore(bmi, bazRow.L, bazRow.M, bazRow.S) : null;
 
   if (errors.length) {
-    result.finalDiagnosis = errors;
+    result.finalDiagnosis = ["Unable to calculate one or more growth indices for this input."];
     result.confidence = { level: "low", label: "Low", detail: "Fix LMS data coverage or regenerate JSON." };
     result.classifications = {
       waz: { label: "—", level: "na" },
       haz: { label: "—", level: "na" },
       whz: { label: "—", level: "na" },
       baz: { label: "—", level: "na" },
+    };
+    result.nutritionStatus = {
+      underweight: { label: "Underweight not applicable", level: "na" },
+      stunting: { label: "Stunting not applicable", level: "na" },
+      wasting: { label: "Wasting not applicable", level: "na" },
+      bmiStatus: { label: "BMI-for-age not applicable", level: "na" },
     };
     result.acuteCombined = { level: "na", label: "—", sources: [] };
     return result;
@@ -134,6 +189,12 @@ export function analyzeScreening({
     haz: hazC,
     whz: whzC,
     baz: bazC,
+  };
+  result.nutritionStatus = {
+    underweight: { label: namedStatus("underweight", wazC), level: wazC.level },
+    stunting: { label: namedStatus("stunting", hazC), level: hazC.level },
+    wasting: { label: namedStatus("wasting", whzC), level: whzC.level },
+    bmiStatus: { label: namedStatus("bmi", bazC), level: bazC.level },
   };
 
   const whzAcute = whzToAcuteLevel(whz);

@@ -8,16 +8,21 @@ export function zScore(x, L, M, S) {
   return (Math.pow(x / M, L) - 1) / (L * S);
 }
 
-function interpolateRows(rows, value, xKey) {
-  if (!rows || rows.length === 0) return null;
-  const sorted = [...rows].sort((a, b) => a[xKey] - b[xKey]);
+function interpolateRows(rows, value, xKey, options = {}) {
+  const { ageBand = null } = options;
+  const filtered = ageBand == null ? rows : (rows || []).filter((row) => row.ageBand === ageBand);
+  if (!filtered || filtered.length === 0) return null;
+  const sorted = [...filtered].sort((a, b) => a[xKey] - b[xKey]);
   const xv = Number(value);
   if (Number.isNaN(xv)) return null;
 
   const first = sorted[0];
   const last = sorted[sorted.length - 1];
-  if (xv <= first[xKey]) return { L: first.L, M: first.M, S: first.S };
-  if (xv >= last[xKey]) return { L: last.L, M: last.M, S: last.S };
+  // Do not extrapolate outside WHO table ranges; returning null lets callers
+  // report that input is outside supported LMS coverage.
+  if (xv < first[xKey] || xv > last[xKey]) return null;
+  if (xv === first[xKey]) return { L: first.L, M: first.M, S: first.S };
+  if (xv === last[xKey]) return { L: last.L, M: last.M, S: last.S };
 
   let lower = first;
   let upper = last;
@@ -55,8 +60,8 @@ function getRowsForSex(bundle, sex) {
  * @param {'M'|'F'} sex
  * @param {'age'|'height'} xKey
  */
-export function interpolateLMS(lms, indicator, value, sex, xKey) {
+export function interpolateLMS(lms, indicator, value, sex, xKey, options = {}) {
   const bundle = lms && lms[indicator];
   const rows = getRowsForSex(bundle, sex);
-  return interpolateRows(rows, value, xKey);
+  return interpolateRows(rows, value, xKey, options);
 }

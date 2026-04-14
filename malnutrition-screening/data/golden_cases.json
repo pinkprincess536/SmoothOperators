@@ -14,10 +14,18 @@
     },
     {
       "name": "whz_length_mode_under24",
-      "input": { "ageMonths": 23, "sex": "M", "weightKg": 13.9764, "heightCm": 94.3, "muacMm": "" },
+      "input": { "ageMonths": 23, "sex": "M", "weightKg": 13.8928, "heightCm": 94.3, "muacMm": "" },
       "expect": {
         "zScoresNear": { "whz": 0 },
         "whzModeIncludes": "0–23 mo"
+      }
+    },
+    {
+      "name": "whz_height_mode_24m",
+      "input": { "ageMonths": 24, "sex": "M", "weightKg": 14.06, "heightCm": 95, "muacMm": "" },
+      "expect": {
+        "zScoresNear": { "whz": 0 },
+        "whzModeIncludes": "24–60 mo"
       }
     },
     {

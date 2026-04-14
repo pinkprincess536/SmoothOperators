@@ -1,170 +1,260 @@
 """
-Convert WHO-style LMS Excel workbooks (same layout as test/test.py) into data/lms.json
-for the offline malnutrition screening PWA.
+Convert WHO LMS Excel workbooks into data/lms.json for the malnutrition
+screening PWA without requiring third-party Excel dependencies.
 
 Expected files in the working directory (or pass --dir):
-  weight_for_age.xlsx   -> waz (numeric column: age, months)
-  Height_for_age.xlsx   -> haz
-  weight_for_height.xlsx-> whz (numeric column: height, cm)
-  bmi_for_age.xlsx      -> baz
-
-Each workbook may contain multiple sheets; sex may be inferred from sheet names
-('boy', 'male', 'girl', 'female'). Columns must include L, M, S after cleaning.
-
-Usage:
-  pip install pandas openpyxl
-  python convert_lms_excel_to_json.py --dir ..
+  weight_for_age.xlsx    -> waz (numeric key: age, months)
+  Height_for_age.xlsx    -> haz
+  weight_for_height.xlsx -> whz (numeric key: height, cm; preserves WHO age bands)
+  bmi_for_age.xlsx       -> baz
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import re
+from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
+from zipfile import ZipFile
+import xml.etree.ElementTree as ET
 
-import pandas as pd
-
-DATASET_VERSION = "who-lms-v2"
+DATASET_VERSION = "who-lms-v3"
 ALLOWED_INDICATORS = ("waz", "haz", "whz", "baz")
+NS = {
+    "main": "http://schemas.openxmlformats.org/spreadsheetml/2006/main",
+    "rel": "http://schemas.openxmlformats.org/officeDocument/2006/relationships",
+    "pkg": "http://schemas.openxmlformats.org/package/2006/relationships",
+}
 
 
-def force_clean(df: pd.DataFrame, numeric_cols: list[str] | None = None) -> pd.DataFrame:
-    df = df.copy()
-    df.columns = df.columns.str.strip()
-    rename_map = {
-        "Gender": "sex",
-        "Age": "age",
-        "Length(cm)": "height",
-        "Height(cm)": "height",
+def column_letters(ref: str) -> str:
+    letters = []
+    for char in ref:
+        if char.isalpha():
+            letters.append(char)
+        else:
+            break
+    return "".join(letters)
+
+
+def normalize_header(value: str) -> str:
+    compact = re.sub(r"\s+", "", str(value or "").strip().lower())
+    mapping = {
+        "gender": "sex",
+        "sex": "sex",
+        "age": "age",
+        "age(months)": "age",
+        "length(cm)": "height",
+        "height(cm)": "height",
+        "length": "height",
+        "height": "height",
+        "l": "L",
+        "m": "M",
+        "s": "S",
     }
-    df.rename(columns={k: v for k, v in rename_map.items() if k in df.columns}, inplace=True)
+    return mapping.get(compact, str(value or "").strip())
 
-    if "sex" in df.columns:
-        df["sex"] = df["sex"].astype(str).str.strip().str.upper()
-        df["sex"] = df["sex"].replace(
-            {"MALE": "M", "FEMALE": "F", "BOY": "M", "GIRL": "F"}
-        )
-        df["sex"] = df["sex"].apply(lambda x: "M" if "M" in x else ("F" if "F" in x else x))
 
-    required = ["sex", "L", "M", "S"]
-    if numeric_cols:
-        required.extend(numeric_cols)
-    keep_cols = [c for c in required if c in df.columns]
-    df = df[keep_cols]
+def normalize_sex(value: str | None, sheet_name: str) -> str | None:
+    raw = str(value or "").strip().upper()
+    if not raw:
+        low = sheet_name.lower()
+        if "boy" in low or "male" in low:
+            raw = "M"
+        elif "girl" in low or "female" in low:
+            raw = "F"
+    if raw in {"M", "MALE", "BOY"}:
+        return "M"
+    if raw in {"F", "FEMALE", "GIRL"}:
+        return "F"
+    return None
 
-    if numeric_cols:
+
+def parse_number(value: str | None) -> float | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    try:
+        return float(text)
+    except ValueError:
+        return None
+
+
+def load_xlsx_records(path: Path) -> list[tuple[str, dict[str, str]]]:
+    with ZipFile(path) as archive:
+        shared_strings: list[str] = []
+        if "xl/sharedStrings.xml" in archive.namelist():
+            root = ET.fromstring(archive.read("xl/sharedStrings.xml"))
+            for item in root.findall("main:si", NS):
+                text = "".join(node.text or "" for node in item.iterfind(".//main:t", NS))
+                shared_strings.append(text)
+
+        workbook = ET.fromstring(archive.read("xl/workbook.xml"))
+        rels = ET.fromstring(archive.read("xl/_rels/workbook.xml.rels"))
+        target_by_id = {
+            rel.attrib["Id"]: rel.attrib["Target"]
+            for rel in rels.findall("pkg:Relationship", NS)
+        }
+
+        records: list[tuple[str, dict[str, str]]] = []
+        sheets = workbook.find("main:sheets", NS)
+        if sheets is None:
+            raise ValueError(f"No sheets found in {path}")
+        for sheet in sheets:
+            name = sheet.attrib.get("name", "Sheet")
+            rel_id = sheet.attrib["{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id"]
+            target = "xl/" + target_by_id[rel_id]
+            xml = ET.fromstring(archive.read(target))
+            headers: dict[str, str] | None = None
+
+            for row in xml.findall(".//main:sheetData/main:row", NS):
+                values: dict[str, str] = {}
+                for cell in row.findall("main:c", NS):
+                    ref = cell.attrib.get("r", "")
+                    typ = cell.attrib.get("t")
+                    value_node = cell.find("main:v", NS)
+                    inline_node = cell.find("main:is", NS)
+                    if typ == "s" and value_node is not None:
+                        value = shared_strings[int(value_node.text)]
+                    elif typ == "inlineStr" and inline_node is not None:
+                        value = "".join(node.text or "" for node in inline_node.iterfind(".//main:t", NS))
+                    elif value_node is not None:
+                        value = value_node.text or ""
+                    else:
+                        value = ""
+                    values[column_letters(ref)] = value
+
+                if headers is None:
+                    headers = {col: normalize_header(val) for col, val in values.items()}
+                    continue
+
+                row_map = {headers[col]: val for col, val in values.items() if col in headers}
+                if any(str(v).strip() for v in row_map.values()):
+                    records.append((name, row_map))
+
+        return records
+
+
+def load_indicator_records(path: Path, numeric_cols: list[str], preserve_age_band: bool = False) -> list[dict]:
+    cleaned: list[dict] = []
+    for sheet_name, raw in load_xlsx_records(path):
+        sex = normalize_sex(raw.get("sex"), sheet_name)
+        if sex is None:
+            continue
+
+        row: dict[str, object] = {"sex": sex}
+        valid = True
         for col in numeric_cols:
-            if col in df.columns:
-                df[col] = pd.to_numeric(df[col], errors="coerce")
+            number = parse_number(raw.get(col))
+            if number is None:
+                valid = False
+                break
+            row[col] = number
 
-    df = df.dropna(subset=keep_cols)
-    return df
+        for col in ("L", "M", "S"):
+            number = parse_number(raw.get(col))
+            if number is None:
+                valid = False
+                break
+            row[col] = number
 
+        if not valid:
+            continue
 
-def load_excel_robust(path: Path, numeric_cols: list[str] | None = None) -> pd.DataFrame:
-    xls = pd.ExcelFile(path)
-    dfs: list[pd.DataFrame] = []
-    for sheet_name in xls.sheet_names:
-        df = pd.read_excel(xls, sheet_name=sheet_name)
-        if "sex" not in df.columns and "Gender" not in df.columns:
-            low = sheet_name.lower()
-            if "boy" in low or "male" in low:
-                df["sex"] = "M"
-            elif "girl" in low or "female" in low:
-                df["sex"] = "F"
-        cleaned = force_clean(df, numeric_cols=numeric_cols)
-        if not cleaned.empty:
-            dfs.append(cleaned)
-    if not dfs:
+        if preserve_age_band:
+            age_band = str(raw.get("age", "")).strip()
+            if not age_band:
+                valid = False
+            else:
+                row["ageBand"] = age_band
+
+        if valid:
+            cleaned.append(row)
+
+    if not cleaned:
         raise ValueError(f"No valid data in {path}")
-    return pd.concat(dfs, ignore_index=True)
+    return cleaned
 
 
-def df_to_rows(df: pd.DataFrame, xkey: str) -> dict[str, list[dict]]:
+def group_rows(records: list[dict], xkey: str, preserve_age_band: bool = False) -> dict[str, list[dict]]:
     out: dict[str, list[dict]] = {"M": [], "F": []}
     for sex in ("M", "F"):
-        sub = df[df["sex"] == sex][[xkey, "L", "M", "S"]].copy()
-        sub = sub.groupby(xkey, as_index=False)[["L", "M", "S"]].mean().sort_values(xkey)
-        rows: list[dict] = []
-        for _, r in sub.iterrows():
-            rows.append(
-                {
-                    xkey: float(r[xkey]),
-                    "L": float(r["L"]),
-                    "M": float(r["M"]),
-                    "S": float(r["S"]),
-                }
-            )
-        out[sex] = rows
+        grouped: dict[tuple, list[dict]] = defaultdict(list)
+        for row in records:
+            if row["sex"] != sex:
+                continue
+            key = (row[xkey], row.get("ageBand")) if preserve_age_band else (row[xkey],)
+            grouped[key].append(row)
+
+        payload_rows: list[dict] = []
+        for key, items in grouped.items():
+            bucket = {
+                xkey: float(key[0]),
+                "L": sum(float(item["L"]) for item in items) / len(items),
+                "M": sum(float(item["M"]) for item in items) / len(items),
+                "S": sum(float(item["S"]) for item in items) / len(items),
+            }
+            if preserve_age_band:
+                bucket["ageBand"] = key[1]
+            payload_rows.append(bucket)
+
+        sort_key = (lambda row: (row.get("ageBand", ""), row[xkey])) if preserve_age_band else (lambda row: row[xkey])
+        out[sex] = sorted(payload_rows, key=sort_key)
     return out
 
 
-def validate_rows(rows: dict[str, list[dict]], xkey: str, indicator: str) -> None:
+def validate_rows(rows: dict[str, list[dict]], xkey: str, indicator: str, preserve_age_band: bool = False) -> None:
     for sex in ("M", "F"):
         values = rows.get(sex, [])
         if not values:
             raise ValueError(f"{indicator}.{sex} has no rows.")
-        xvals = [r[xkey] for r in values]
-        if any(v is None for v in xvals):
-            raise ValueError(f"{indicator}.{sex} contains empty {xkey} values.")
-        if sorted(xvals) != xvals:
-            raise ValueError(f"{indicator}.{sex} is not sorted by {xkey}.")
-        if len(set(xvals)) != len(xvals):
-            raise ValueError(f"{indicator}.{sex} contains duplicate {xkey} values.")
+
+        seen: set[tuple] = set()
         for row in values:
-            for key in ("L", "M", "S"):
-                if key not in row:
-                    raise ValueError(f"{indicator}.{sex} row missing {key}.")
-                if not isinstance(row[key], float):
-                    raise ValueError(f"{indicator}.{sex} {key} is not numeric.")
+            if xkey not in row:
+                raise ValueError(f"{indicator}.{sex} row missing {xkey}.")
+            if preserve_age_band and not row.get("ageBand"):
+                raise ValueError(f"{indicator}.{sex} row missing ageBand.")
+            key = (row[xkey], row.get("ageBand")) if preserve_age_band else (row[xkey],)
+            if key in seen:
+                raise ValueError(f"{indicator}.{sex} contains duplicate keys: {key}.")
+            seen.add(key)
+
+            for field in ("L", "M", "S"):
+                if not isinstance(row.get(field), float):
+                    raise ValueError(f"{indicator}.{sex} {field} is not numeric.")
 
 
 def validate_payload(payload: dict) -> None:
-    if "meta" not in payload:
-        raise ValueError("Payload missing meta.")
-    if payload["meta"].get("schema_version") != DATASET_VERSION:
-        raise ValueError(f"Unexpected schema version: {payload['meta'].get('schema_version')}")
+    if payload.get("meta", {}).get("schema_version") != DATASET_VERSION:
+        raise ValueError("Payload has an unexpected schema version.")
     for indicator in ALLOWED_INDICATORS:
         if indicator not in payload:
             raise ValueError(f"Payload missing indicator: {indicator}")
-        xkey = "height" if indicator == "whz" else "age"
-        validate_rows(payload[indicator], xkey, indicator)
+        validate_rows(
+            payload[indicator],
+            "height" if indicator == "whz" else "age",
+            indicator,
+            preserve_age_band=(indicator == "whz"),
+        )
 
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument(
-        "--dir",
-        type=Path,
-        default=Path("."),
-        help="Directory containing the four xlsx files",
-    )
-    ap.add_argument(
-        "-o",
-        "--output",
-        type=Path,
-        default=Path("data/lms.json"),
-        help="Output JSON path",
-    )
-    ap.add_argument(
-        "--source",
-        type=str,
-        default="WHO growth standards Excel",
-        help="Source label persisted in metadata.",
-    )
+    ap.add_argument("--dir", type=Path, default=Path("."), help="Directory containing the four xlsx files")
+    ap.add_argument("-o", "--output", type=Path, default=Path("data/lms.json"), help="Output JSON path")
+    ap.add_argument("--source", type=str, default="WHO growth standards Excel", help="Source label persisted in metadata.")
     args = ap.parse_args()
-    base: Path = args.dir
+    base = args.dir
 
-    waz = load_excel_robust(base / "weight_for_age.xlsx", numeric_cols=["age"])
-    haz = load_excel_robust(base / "Height_for_age.xlsx", numeric_cols=["age"])
-    whz = load_excel_robust(base / "weight_for_height.xlsx", numeric_cols=["height"])
-    baz = load_excel_robust(base / "bmi_for_age.xlsx", numeric_cols=["age"])
-
-    waz_rows = df_to_rows(waz, "age")
-    haz_rows = df_to_rows(haz, "age")
-    whz_rows = df_to_rows(whz, "height")
-    baz_rows = df_to_rows(baz, "age")
+    waz = load_indicator_records(base / "weight_for_age.xlsx", ["age"])
+    haz = load_indicator_records(base / "Height_for_age.xlsx", ["age"])
+    whz = load_indicator_records(base / "weight_for_height.xlsx", ["height"], preserve_age_band=True)
+    baz = load_indicator_records(base / "bmi_for_age.xlsx", ["age"])
 
     payload = {
         "meta": {
@@ -174,11 +264,12 @@ def main() -> None:
             "generated_at_utc": datetime.now(timezone.utc).isoformat(),
             "waz_age_months_max": 120,
             "whz_age_months_max": 60,
+            "whz_age_bands": {"0-2": "0 to 23 months", "2-5": "24 to 60 months"},
         },
-        "waz": waz_rows,
-        "haz": haz_rows,
-        "whz": whz_rows,
-        "baz": baz_rows,
+        "waz": group_rows(waz, "age"),
+        "haz": group_rows(haz, "age"),
+        "whz": group_rows(whz, "height", preserve_age_band=True),
+        "baz": group_rows(baz, "age"),
     }
     validate_payload(payload)
 
