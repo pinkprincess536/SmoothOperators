@@ -1,0 +1,29 @@
+# Malnutrition Screening Platform — Python Dependencies
+# Install with: pip install -r requirements.txt
+#
+# For YOLO server (yolo_server.py on port 5001):
+#   torch and torchvision must be CPU-only build to avoid Bus error
+#   when running alongside TensorFlow in the same environment.
+#   Install with:
+#     pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+
+# Flask backend
+Flask==3.1.3
+flask-cors==6.0.2
+
+# TensorFlow (for server.py — binary ResNet classifier)
+tensorflow==2.21.0
+
+# PyTorch CPU-only (for yolo_server.py — YOLO + ResNet18 sign detector)
+# See note above — install via pytorch.org/whl/cpu index
+torch==2.11.0+cpu
+torchvision==0.26.0+cpu
+ultralytics==8.4.37
+
+# Image processing
+numpy==2.4.3
+opencv-python-headless==4.13.0.92
+Pillow
+
+# Scientific computing (required by ultralytics/scipy)
+scipy==1.17.1

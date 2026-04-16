@@ -1,0 +1,49 @@
+{
+  "yolo_classes": [
+    "distended_belly",
+    "flat_belly",
+    "moon_face",
+    "sunken_eyes",
+    "visible_back_bones",
+    "visible_ribs",
+    "wasted_arms"
+  ],
+  "resnet18_classes": [
+    "distended_belly",
+    "flat_belly",
+    "moon_face",
+    "no_sign",
+    "sunken_eyes",
+    "visible_back_bones",
+    "visible_ribs",
+    "wasted_arms"
+  ],
+  "sign_to_condition": {
+    "visible_ribs": "Marasmus / General wasting",
+    "flat_belly": "Marasmus / General wasting",
+    "wasted_arms": "Marasmus / General wasting",
+    "visible_back_bones": "Marasmus / General wasting",
+    "distended_belly": "Kwashiorkor (protein deficiency)",
+    "moon_face": "Kwashiorkor (protein deficiency)"
+  },
+  "sign_descriptions": {
+    "visible_ribs": "Rib cage is clearly visible through skin, indicating severe loss of body fat and muscle.",
+    "flat_belly": "Abdomen is sunken/flat due to loss of subcutaneous fat, a sign of energy deprivation.",
+    "wasted_arms": "Upper arm is visibly thin with muscle wasting, consistent with severe undernutrition.",
+    "visible_back_bones": "Spine and/or shoulder blades are prominently visible, indicating muscle and fat loss.",
+    "distended_belly": "Abdomen is swollen and protruding due to fluid retention from protein deficiency.",
+    "moon_face": "Cheeks appear puffy and rounded due to edema from severe protein deficiency."
+  },
+  "img_size": 224,
+  "yolo_conf_threshold": 0.35,
+  "marasmus_signs": [
+    "visible_ribs",
+    "flat_belly",
+    "wasted_arms",
+    "visible_back_bones"
+  ],
+  "kwashiorkor_signs": [
+    "distended_belly",
+    "moon_face"
+  ]
+}

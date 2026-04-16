@@ -1,0 +1,52 @@
+{
+  "schema": "golden-cases-v1",
+  "tolerance": 0.02,
+  "cases": [
+    {
+      "name": "waz_median_male_24m",
+      "input": { "ageMonths": 24, "sex": "M", "weightKg": 12.1515, "heightCm": 86, "muacMm": "" },
+      "expect": { "zScoresNear": { "waz": 0 } }
+    },
+    {
+      "name": "haz_median_female_18m",
+      "input": { "ageMonths": 18, "sex": "F", "weightKg": 9.8, "heightCm": 80.7079, "muacMm": "" },
+      "expect": { "zScoresNear": { "haz": 0 } }
+    },
+    {
+      "name": "whz_length_mode_under24",
+      "input": { "ageMonths": 23, "sex": "M", "weightKg": 13.8928, "heightCm": 94.3, "muacMm": "" },
+      "expect": {
+        "zScoresNear": { "whz": 0 },
+        "whzModeIncludes": "0–23 mo"
+      }
+    },
+    {
+      "name": "whz_height_mode_24m",
+      "input": { "ageMonths": 24, "sex": "M", "weightKg": 14.06, "heightCm": 95, "muacMm": "" },
+      "expect": {
+        "zScoresNear": { "whz": 0 },
+        "whzModeIncludes": "24–60 mo"
+      }
+    },
+    {
+      "name": "baz_median_female_24m",
+      "input": { "ageMonths": 24, "sex": "F", "weightKg": 15.6881, "heightCm": 100, "muacMm": "" },
+      "expect": { "zScoresNear": { "baz": 0 } }
+    },
+    {
+      "name": "acute_boundary_age60_whz_used",
+      "input": { "ageMonths": 60, "sex": "M", "weightKg": 13.9764, "heightCm": 95, "muacMm": "" },
+      "expect": { "acuteCombinedLevel": "normal" }
+    },
+    {
+      "name": "acute_boundary_age61_whz_not_used",
+      "input": { "ageMonths": 61, "sex": "M", "weightKg": 13.9764, "heightCm": 95, "muacMm": "" },
+      "expect": { "acuteCombinedLevel": "na", "zScoresNull": ["whz"] }
+    },
+    {
+      "name": "muac_severe_drives_combined",
+      "input": { "ageMonths": 18, "sex": "F", "weightKg": 10, "heightCm": 82, "muacMm": 110 },
+      "expect": { "acuteCombinedLevel": "severe" }
+    }
+  ]
+}

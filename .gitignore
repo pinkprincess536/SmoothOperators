@@ -1,0 +1,29 @@
+# Virtual Environments
+myenv/
+venv/
+env/
+.env
+
+# Python Cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Jupyter Notebook Cache
+.ipynb_checkpoints/
+
+# Datasets and Large Files
+dataset*/
+test/
+*.pt
+*.h5
+*.weights
+
+# Local Web Dev
+node_modules/
+.npm/
+
+# OS Files
+.DS_Store
+Thumbs.db
